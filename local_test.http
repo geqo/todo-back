@@ -1,0 +1,13 @@
+### GET todos
+GET http://localhost:3000/todos
+
+
+### POST new todo
+POST http://localhost:3000/todos
+Content-Type: application/json
+
+{
+  "id": 1,
+  "task": "Learn Server"
+}
+
