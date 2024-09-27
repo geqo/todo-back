@@ -1,20 +1,25 @@
 ### GET todos
-GET https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos
+GET https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos?status=DONE
+
+### OPTIONS
+OPTIONS https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos
+
 
 ### POST new todo
 POST https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos
 Content-Type: application/json
 
 {
-  "task": "Learn Server 2"
+  "task": "Learn Server 2",
+  "status": "IN_PROGRESS"
 }
 
 ### GET todo
-GET https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos/2024-09-25T16:48:12.792Z
+GET https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos/2024-09-25T17:01:55.971Z
 Content-Type: application/json
 
 ### UPDATE todo
-PUT https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos/2024-09-25T16:48:12.792Z
+PUT https://kj8ib2n8eb.execute-api.us-east-1.amazonaws.com/prod/todos/2024-09-25T17:01:55.971Z
 Content-Type: application/json
 
 {
