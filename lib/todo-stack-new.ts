@@ -1,3 +1,5 @@
+import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -11,7 +13,7 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as customResources from 'aws-cdk-lib/custom-resources';
 
-export class TodoStack extends cdk.Stack {
+export class TodoStackNew extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props);
 
@@ -27,12 +29,43 @@ export class TodoStack extends cdk.Stack {
             projectionType: dynamodb.ProjectionType.ALL,
         });
 
+        table.addGlobalSecondaryIndex({
+            indexName: 'UserIdIndex',
+            partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+            projectionType: dynamodb.ProjectionType.ALL,
+        });
+
+        // cognito
+        const userPool = new cognito.UserPool(this, 'TodoUserPool', {
+            selfSignUpEnabled: true,
+            signInAliases: { email: true },
+            autoVerify: { email: true },
+            passwordPolicy: {
+                minLength: 8,
+                requireLowercase: true,
+                requireUppercase: true,
+                requireDigits: true,
+                requireSymbols: true,
+            },
+            accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+        });
+
+        const userPoolClient = new cognito.UserPoolClient(this, 'TodoUserPoolClient', {
+            userPool,
+        });
+
+        const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'TodoApiAuthorizer', {
+            cognitoUserPools: [userPool],
+        });
+
         const todoLambda = new NodejsFunction(this, 'TodoLambda', {
             runtime: lambda.Runtime.NODEJS_18_X,
             handler: 'handler',
             entry: path.join(__dirname, '../src/index.ts'),
             environment: {
                 TABLE_NAME: table.tableName,
+                USER_POOL_ID: userPool.userPoolId,
+                CLIENT_ID: userPoolClient.userPoolClientId,
             },
             bundling: {
                 externalModules: ['aws-sdk'],
@@ -47,18 +80,56 @@ export class TodoStack extends cdk.Stack {
             defaultCorsPreflightOptions: {
                 allowOrigins: apigateway.Cors.ALL_ORIGINS,
                 allowMethods: apigateway.Cors.ALL_METHODS,
+                allowHeaders: ['Content-Type', 'Authorization'],
             }
         });
 
+        const authRole = new iam.Role(this, 'CognitoAuthRole', {
+            assumedBy: new iam.FederatedPrincipal('cognito-identity.amazonaws.com', {
+                'StringEquals': { 'cognito-identity.amazonaws.com:aud': userPoolClient.userPoolClientId },
+            }, 'sts:AssumeRoleWithWebIdentity'),
+        });
+
         const todos = api.root.addResource('todos');
-        todos.addMethod('GET');    // GET /todos
-        todos.addMethod('POST');   // POST /todos
-
         const singleTodo = todos.addResource('{id}');
-        singleTodo.addMethod('GET');    // GET /todos/{id}
-        singleTodo.addMethod('PUT');    // PUT /todos/{id}
-        singleTodo.addMethod('DELETE'); // DELETE /todos/{id}
 
+        todos.addMethod('GET', new apigateway.LambdaIntegration(todoLambda), {
+            authorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+        });
+
+        todos.addMethod('POST', new apigateway.LambdaIntegration(todoLambda), {
+            authorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+        });
+
+        singleTodo.addMethod('GET', new apigateway.LambdaIntegration(todoLambda), {
+            authorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+        });
+
+        singleTodo.addMethod('PUT', new apigateway.LambdaIntegration(todoLambda), {
+            authorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+        });
+
+        singleTodo.addMethod('DELETE', new apigateway.LambdaIntegration(todoLambda), {
+            authorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+        });
+
+        // Outputs
+        new cdk.CfnOutput(this, 'UserPoolId', {
+            value: userPool.userPoolId,
+            description: 'Cognito User Pool ID',
+        });
+
+        new cdk.CfnOutput(this, 'UserPoolClientId', {
+            value: userPoolClient.userPoolClientId,
+            description: 'Cognito User Pool Client ID',
+        });
+
+        // frontend
         const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
             websiteIndexDocument: 'index.html',
             publicReadAccess: true,
@@ -102,7 +173,20 @@ export class TodoStack extends cdk.Stack {
             },
         });
 
+        const updateLambdaUserId = new NodejsFunction(this, 'UpdateTodosWithUserIdLambda', {
+            runtime: lambda.Runtime.NODEJS_18_X,
+            handler: 'handler',
+            entry: path.join(__dirname, '../src/updateTodosWithUserId.ts'),
+            environment: {
+                TABLE_NAME: table.tableName,
+            },
+            bundling: {
+                externalModules: ['aws-sdk'],
+            },
+        });
+
         table.grantReadWriteData(updateLambda);
+        table.grantReadWriteData(updateLambdaUserId);
 
         const provider = new customResources.Provider(this, 'Provider', {
             onEventHandler: updateLambda,
